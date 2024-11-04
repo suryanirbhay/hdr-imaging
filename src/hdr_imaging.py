@@ -3,6 +3,9 @@ import cv2
 from matplotlib import pyplot as plt
 from typing import List, Tuple
 import logging
+from PIL import Image
+from PIL.ExifTags import TAGS
+import os
 
 class HDRImaging:
     def __init__(self):
@@ -28,6 +31,42 @@ class HDRImaging:
         
         self.logger.info(f"Loaded {len(images)} images successfully")
         return images
+    
+    def get_exposure_times(self, image_paths):
+        """
+        Extract exposure times from image EXIF data
+    
+        Args:
+        image_paths: List of paths to images
+        
+        Returns:
+        List of exposure times in seconds
+        """
+        exposure_times = []
+    
+        for path in image_paths:
+            try:
+                with Image.open(path) as img:
+                    exif = img._getexif()
+                    if exif is not None:
+                        for tag_id, value in exif.items():
+                            tag = TAGS.get(tag_id, tag_id)
+                            if tag == 'ExposureTime':
+                                if isinstance(value, tuple):
+                                    exposure_time = value[0] / value[1]  # Convert rational to float
+                                else:
+                                    exposure_time = float(value)
+                                exposure_times.append(exposure_time)
+                                print(f"{os.path.basename(path)}: {exposure_time:.3f} seconds")
+                                break
+                        else:
+                            print(f"No exposure time found for {os.path.basename(path)}")
+                    else:
+                        print(f"No EXIF data found for {os.path.basename(path)}")
+            except Exception as e:
+                print(f"Error reading {os.path.basename(path)}: {str(e)}")
+    
+        return exposure_times
     
     def align_images(self, images: List[np.ndarray]) -> List[np.ndarray]:
         """
@@ -92,8 +131,10 @@ class HDRImaging:
         Returns:
             HDR image as numpy array
         """
+        exposure_times = np.array(exposure_times, dtype=np.float32)
+        response_curve = self.estimate_response_curve(images, exposure_times)
         mergeDebevec = cv2.createMergeDebevec()
-        hdr = mergeDebevec.process(images, exposure_times)
+        hdr = mergeDebevec.process(images, exposure_times, response_curve)
         return hdr
     
     def tone_map(self, hdr_image: np.ndarray, 
