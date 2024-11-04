@@ -22,7 +22,7 @@ def main():
         logger.info("Attempting to read exposure times from EXIF data...")
         actual_exposure_times = hdr_processor.get_exposure_times(image_paths)
 
-        exposure_times = [1/30.0, 1/8.0, 1/2.0]
+        exposure_times = [1/4100, 1/910, 1/122]
         
         if actual_exposure_times and len(actual_exposure_times) == len(image_paths):
             logger.info("Using exposure times from EXIF data")
