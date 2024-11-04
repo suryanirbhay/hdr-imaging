@@ -32,10 +32,10 @@ class HDRImaging:
         self.logger.info(f"Loaded {len(images)} images successfully")
         return images
     
-    def get_exposure_times(self, image_paths):
+    def get_exposure_times(self, image_paths: List[str]) -> List[float]:
         """
         Extract exposure times from image EXIF data
-    
+        
         Args:
         image_paths: List of paths to images
         
@@ -70,7 +70,7 @@ class HDRImaging:
     
     def align_images(self, images: List[np.ndarray]) -> List[np.ndarray]:
         """
-        Align multiple images using ECC algorithm
+        Align multiple images using ECC algorithm (translation-based alignment)
         
         Args:
             images: List of input images
@@ -79,10 +79,10 @@ class HDRImaging:
             List of aligned images
         """
         aligned_images = [images[0]]  # Reference image
-        warp_mode = cv2.MOTION_HOMOGRAPHY
-        warp_matrix = np.eye(3, 3, dtype=np.float32)
+        warp_mode = cv2.MOTION_TRANSLATION  # Simpler motion model
+        warp_matrix = np.eye(2, 3, dtype=np.float32)  # For translation, use 2x3 matrix
         
-        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 50, 0.001)
+        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 5000, 1e-10)
         
         for img in images[1:]:
             try:
@@ -93,12 +93,12 @@ class HDRImaging:
                     warp_mode,
                     criteria
                 )
-                aligned = cv2.warpPerspective(img, warp_matrix, 
+                aligned = cv2.warpAffine(img, warp_matrix, 
                                            (img.shape[1], img.shape[0]),
                                            flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
                 aligned_images.append(aligned)
-            except:
-                self.logger.warning("Failed to align image, using original")
+            except Exception as e:
+                self.logger.warning(f"Failed to align image: {str(e)}, using original")
                 aligned_images.append(img)
                 
         return aligned_images
@@ -132,14 +132,14 @@ class HDRImaging:
             HDR image as numpy array
         """
         exposure_times = np.array(exposure_times, dtype=np.float32)
-        response_curve = self.estimate_response_curve(images, exposure_times)
         mergeDebevec = cv2.createMergeDebevec()
-        hdr = mergeDebevec.process(images, exposure_times, response_curve)
+        hdr = mergeDebevec.process(images, exposure_times)
         return hdr
     
     def tone_map(self, hdr_image: np.ndarray, 
                  gamma: float = 1.0, 
-                 saturation: float = 1.0) -> np.ndarray:
+                 saturation: float = 1.0, 
+                 method: str = 'reinhard') -> np.ndarray:
         """
         Apply tone mapping to HDR image
         
@@ -147,16 +147,33 @@ class HDRImaging:
             hdr_image: Input HDR image
             gamma: Gamma correction value
             saturation: Color saturation adjustment
+            method: Tone mapping method ('reinhard', 'drago', 'mantiuk')
             
         Returns:
             Tone mapped LDR image
         """
-        tonemap = cv2.createTonemapReinhard(
-            gamma=gamma,
-            intensity=0.0,
-            light_adapt=0.8,
-            color_adapt=saturation
-        )
+        if method == 'reinhard':
+            tonemap = cv2.createTonemapReinhard(
+                gamma=gamma,
+                intensity=0.0,
+                light_adapt=0.8,
+                color_adapt=saturation
+            )
+        elif method == 'drago':
+            tonemap = cv2.createTonemapDrago(
+                gamma=gamma,
+                saturation=saturation,
+                bias=0.85
+            )
+        elif method == 'mantiuk':
+            tonemap = cv2.createTonemapMantiuk(
+                gamma=gamma,
+                saturation=saturation,
+                scale=0.85
+            )
+        else:
+            raise ValueError("Invalid tone mapping method. Choose 'reinhard', 'drago', or 'mantiuk'.")
+        
         ldr = tonemap.process(hdr_image)
         ldr = np.clip(ldr * 255, 0, 255).astype('uint8')
         return ldr
@@ -164,7 +181,8 @@ class HDRImaging:
     def process_hdr(self, image_paths: List[str], 
                    exposure_times: List[float],
                    gamma: float = 1.0,
-                   saturation: float = 1.0) -> Tuple[np.ndarray, np.ndarray]:
+                   saturation: float = 1.0,
+                   tone_mapping_method: str = 'reinhard') -> Tuple[np.ndarray, np.ndarray]:
         """
         Complete HDR pipeline from input images to tone mapped result
         
@@ -173,6 +191,7 @@ class HDRImaging:
             exposure_times: List of exposure times
             gamma: Gamma correction for tone mapping
             saturation: Color saturation for tone mapping
+            tone_mapping_method: Choose tone mapping method ('reinhard', 'drago', 'mantiuk')
             
         Returns:
             Tuple of (HDR image, tone mapped LDR image)
@@ -185,7 +204,7 @@ class HDRImaging:
         hdr = self.merge_hdr(aligned_images, exposure_times)
         
         # Tone map result
-        ldr = self.tone_map(hdr, gamma, saturation)
+        ldr = self.tone_map(hdr, gamma, saturation, method=tone_mapping_method)
         
         return hdr, ldr
     
@@ -211,7 +230,7 @@ class HDRImaging:
         
         # Show HDR result
         plt.subplot(2, 3, 4)
-        plt.imshow(np.clip(hdr, 0, 1))
+        plt.imshow(np.clip(hdr / np.max(hdr), 0, 1))
         plt.title('HDR Image')
         plt.axis('off')
         
